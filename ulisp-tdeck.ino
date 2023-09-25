@@ -1,5 +1,5 @@
-/* uLisp T-Deck Release 1 - www.ulisp.com
-   David Johnson-Davies - www.technoblogy.com - 20th September 2023
+/* uLisp T-Deck Release 2 - www.ulisp.com
+   David Johnson-Davies - www.technoblogy.com - 25th September 2023
 
    Licensed under the MIT license: https://opensource.org/licenses/MIT
 */
@@ -16,7 +16,6 @@ const char LispLibrary[] PROGMEM = "";
 // #define sdcardsupport
 #define gfxsupport
 // #define lisplibrary
-  #define lineeditor
 // #define extensions
 
 // Includes
@@ -1393,6 +1392,7 @@ object *apropos (object *arg, bool print) {
       }
     }
     globals = cdr(globals);
+    if (!tstflag(NOESC)) testescape();
   }
   // Built-in?
   int entries = tablesize(0) + tablesize(1);
@@ -1409,6 +1409,7 @@ object *apropos (object *arg, bool print) {
         cdr(ptr) = cons(bsymbol(i), NULL); ptr = cdr(ptr);
       }
     }
+    if (!tstflag(NOESC)) testescape();
   }
   return cdr(result);
 }
@@ -3796,7 +3797,10 @@ object *fn_analogwrite (object *args, object *env) {
 object *fn_delay (object *args, object *env) {
   (void) env;
   object *arg1 = first(args);
-  delay(checkinteger(arg1));
+  unsigned long start = millis();
+  unsigned long total = checkinteger(arg1);
+  do testescape();
+  while (millis() - start < total);
   return arg1;
 }
 
@@ -5402,7 +5406,7 @@ const tbl_entry_t lookup_table[] PROGMEM = {
   { string197, sp_unwindprotect, 0307, doc197 },
   { string198, sp_ignoreerrors, 0307, doc198 },
   { string199, sp_error, 0317, doc199 },
-  { string200, sp_withclient, 0312, doc200 },
+  { string200, sp_withclient, 0313, doc200 },
   { string201, fn_available, 0211, doc201 },
   { string202, fn_wifiserver, 0200, doc202 },
   { string203, fn_wifisoftap, 0204, doc203 },
@@ -5504,7 +5508,11 @@ bool findsubstring (char *part, builtin_t name) {
 }
 
 void testescape () {
-  if (Serial.available() && Serial.read() == '~') { Context = NIL; error2(PSTR("escape!")); }
+#if defined serialmonitor
+  if (Serial.available() && Serial.read() == '~') error2(PSTR("escape!"));
+#endif
+  Wire1.requestFrom(0x55, 1);
+  if (Wire1.available() && Wire1.read() == '@') error2(PSTR("escape!"));
 }
 
 bool keywordp (object *obj) {
@@ -5671,10 +5679,11 @@ object *eval (object *form, object *env) {
 
 void pserial (char c) {
   LastPrint = c;
-  // if (!tstflag(NOECHO)) Display(c);         // Don't display on T-Deck when paste in listing
-  Display(c);
+  if (!tstflag(NOECHO)) Display(c);         // Don't display on T-Deck when paste in listing
+  #if defined (serialmonitor)
   if (c == '\n') Serial.write('\r');
   Serial.write(c);
+  #endif
 }
 
 const char ControlCodes[] PROGMEM = "Null\0SOH\0STX\0ETX\0EOT\0ENQ\0ACK\0Bell\0Backspace\0Tab\0Newline\0VT\0"
@@ -5908,7 +5917,7 @@ void loadfromlibrary (object *env) {
 // T-deck terminal and keyboard support
 
 const int Columns = 53;
-const int Leading = 10;
+const int Leading = 10; // Between 8 and 10
 const int Lines = 240/Leading;
 const int LastColumn = Columns-1;
 const int LastLine = Lines-1;
@@ -5926,6 +5935,7 @@ int gserial () {
     LastChar = 0;
     return temp;
   }
+  #if defined (serialmonitor)
   while (!KybdAvailable) {
     if (Serial.available()) {
       char temp = Serial.read();
@@ -5937,6 +5947,7 @@ int gserial () {
         char temp = Wire1.read();
         if ((temp != 0) && (temp !=255)) {
           if (temp == '@') temp = '~';
+          if (temp == '_') temp = '\\';
           ProcessKey(temp);
         }
       }
@@ -5944,12 +5955,31 @@ int gserial () {
   }
   if (ReadPtr != WritePtr) {
     char temp = KybdBuf[ReadPtr++];
-    // Serial.write(temp);
     return temp;
   }
   KybdAvailable = 0;
   WritePtr = 0;
   return '\n';
+  #else
+  while (!KybdAvailable) {
+    Wire1.requestFrom(0x55, 1);
+    if (Wire1.available()) {
+      char temp = Wire1.read();
+      if ((temp != 0) && (temp !=255)) {
+        if (temp == '@') temp = '~';
+        if (temp == '_') temp = '\\';
+        ProcessKey(temp);
+      }
+    }
+  }
+  if (ReadPtr != WritePtr) {
+    char temp = KybdBuf[ReadPtr++];
+    return temp;
+  }
+  KybdAvailable = 0;
+  WritePtr = 0;
+  return '\n';
+  #endif
 }
 
 object *nextitem (gfun_t gfun) {
@@ -6277,9 +6307,11 @@ void initgfx () {
 
 // Entry point from the Arduino IDE
 void setup () {
+  #if defined (serialmonitor)
   Serial.begin(9600);
   int start = millis();
   while ((millis() - start) < 5000) { if (Serial) break; }
+  #endif
   initworkspace();
   initenv();
   initsleep();
