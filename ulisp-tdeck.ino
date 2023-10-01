@@ -13,7 +13,7 @@ const char LispLibrary[] PROGMEM = "";
 #define printfreespace
 #define serialmonitor
 // #define printgcs
-// #define sdcardsupport
+#define sdcardsupport
 #define gfxsupport
 // #define lisplibrary
 // #define extensions
@@ -40,14 +40,41 @@ const char LispLibrary[] PROGMEM = "";
 #define TDECK_TFT_DC 11
 #define TDECK_TFT_BACKLIGHT 42
 #define TDECK_SDCARD_CS 39
-#define BOARD_I2C_SDA       18
-#define BOARD_I2C_SCL       8
+#define TDECK_I2C_SDA       18
+#define TDECK_I2C_SCL       8
+
+#define TDECK_LORA_BUSY     13
+#define TDECK_LORA_RST      17
+#define TDECK_LORA_DIO1     45
+#define TDECK_LORA_CS        9
 
 #include <Arduino_GFX_Library.h>
 #define GFX_DEV_DEVICE LILYGO_T_DECK
 #define TFT_BACKLITE TDECK_TFT_BACKLIGHT
-Arduino_DataBus *bus = new Arduino_ESP32SPI(TDECK_TFT_DC, TDECK_TFT_CS, TDECK_SPI_SCK, TDECK_SPI_MOSI, TDECK_SPI_MISO);
-Arduino_ST7789 tft = Arduino_ST7789(bus, GFX_NOT_DEFINED, 1, true);
+#include <TFT_eSPI.h>
+TFT_eSPI        tft;
+
+
+// #define TDECK_I2S_WS        5
+// #define TDECK_I2S_BCK       7
+// #define TDECK_I2S_DOUT      6
+// #define TDECK_I2C_SDA       18
+// #define TDECK_I2C_SCL       8
+// #define TDECK_BAT_ADC       4
+// #define TDECK_TOUCH_INT     16
+// #define TDECK_KEYTDECK_INT  46
+// #define TDECK_TFT_DC        11
+// #define TDECK_TFT_BACKLIGHT 42
+// #define TDECK_TBOX_G02      2
+// #define TDECK_TBOX_G01      3
+// #define TDECK_TBOX_G04      1
+// #define TDECK_TBOX_G03      15
+// #define TDECK_ES7210_MCLK   48
+// #define TDECK_ES7210_LRCK   21
+// #define TDECK_ES7210_SCK    47
+// #define TDECK_ES7210_DIN    14
+// #define TDECK_BOOT_PIN      0
+
 
 #if defined(sdcardsupport)
   #include <SD.h>
@@ -559,7 +586,8 @@ int EpromReadInt (int *addr) {
 unsigned int saveimage (object *arg) {
 #if defined(sdcardsupport)
   unsigned int imagesize = compactimage(&arg);
-  SD.begin(SDCARD_SS_PIN);
+  
+  sd_begin();
   File file;
   if (stringp(arg)) {
     char buffer[BUFFERSIZE];
@@ -632,7 +660,7 @@ unsigned int saveimage (object *arg) {
 
 unsigned int loadimage (object *arg) {
 #if defined(sdcardsupport)
-  SD.begin(SDCARD_SS_PIN);
+  sd_begin();
   File file;
   if (stringp(arg)) {
     char buffer[BUFFERSIZE];
@@ -704,7 +732,7 @@ unsigned int loadimage (object *arg) {
 
 void autorunimage () {
 #if defined(sdcardsupport)
-  SD.begin(SDCARD_SS_PIN);
+  sd_begin(); 
   File file = SD.open("/ULISP.IMG");
   if (!file) error2(PSTR("problem autorunning from SD card"));
   object *autorun = (object *)SDReadInt(file);
@@ -2371,13 +2399,13 @@ object *sp_withi2c (object *args, object *env) {
   if (address > 127){
     //i2c1 gets reassigned pins
     port = &Wire1;
-    I2Cinit(port, BOARD_I2C_SDA, BOARD_I2C_SCL, 1); // Pullups
+    I2Cinit(port, TDECK_I2C_SDA, TDECK_I2C_SCL, 1); // Pullups
   }else{
     I2Cinit(port, 1); // Pullups
   }
   #else
   I2Cinit(port, 1); // Pullups
-    // I2Cinit(port, BOARD_I2C_SDA, BOARD_I2C_SCL, 1); // Pullups
+    // I2Cinit(port, TDECK_I2C_SDA, TDECK_I2C_SCL, 1); // Pullups
   #endif
   object *pair = cons(var, (I2Cstart(port, address & 0x7F, read)) ? stream(I2CSTREAM, address) : nil);
   push(pair,env);
@@ -2433,7 +2461,7 @@ object *sp_withsdcard (object *args, object *env) {
   Context = temp;
   if (!stringp(filename)) error(PSTR("filename is not a string"), filename);
   params = cdr(params);
-  SD.begin(SDCARD_SS_PIN);
+  sd_begin();
   int mode = 0;
   if (params != NULL && first(params) != NULL) mode = checkinteger(first(params));
   const char *oflag = FILE_READ;
@@ -2463,7 +2491,7 @@ object *sp_withsdcard (object *args, object *env) {
 object *fn_directory (object *args, object *env) {
   (void) env;
   #if defined(sdcardsupport)
-  SD.begin(SDCARD_SS_PIN);
+  sd_begin();
   File root = SD.open("/");
   if (!root) error2(PSTR("problem reading from SD card"));
   object *result = cons(NULL, NULL);
@@ -4364,7 +4392,7 @@ object *fn_drawchar (object *args, object *env) {
   //this drawchar doesnt take a size argument 
   tft.setTextSize(size);
   tft.drawChar(checkinteger(first(args)), checkinteger(second(args)), checkchar(third(args)),
-    colour, bg);
+    colour, bg, size);
   #else
   (void) args;
   #endif
@@ -6145,6 +6173,7 @@ object *read (gfun_t gfun) {
 
 // Plot character at absolute character cell position
 void PlotChar (uint8_t ch, uint8_t line, uint8_t column) {
+ #if defined(gfxsupport)
   tft.setTextSize(1);
   uint16_t y = line*Leading;
   uint16_t x = column*6;
@@ -6152,19 +6181,22 @@ void PlotChar (uint8_t ch, uint8_t line, uint8_t column) {
   ScrollBuf[column][(line+Scroll) % Lines] = ch;
   ch = (ch & 0x7f);
   if (off) {
-    tft.drawChar(x, y, ch, COLOR_BLACK, COLOR_GREEN);
+    tft.drawChar(x, y, ch, COLOR_BLACK, COLOR_GREEN, 1);
   } else {
-    tft.drawChar(x, y, ch, COLOR_WHITE, COLOR_BLACK);
+    tft.drawChar(x, y, ch, COLOR_WHITE, COLOR_BLACK, 1);
   }
+#endif
 }
+
 
 // Clears the bottom line and then scrolls the display up by one line
 void ScrollDisplay () {
+ #if defined(gfxsupport)
   tft.fillRect(0, 240-Leading, 320, 10, COLOR_BLACK);
   Scroll = (Scroll + 1) % Lines;
   for (uint8_t y = 0; y < Lines-1; y++) {
     for (uint8_t x = 0; x < Columns; x++) {
-      tft.drawChar(x*6, y*Leading, ScrollBuf[x][(y+Scroll) % Lines], COLOR_WHITE, COLOR_BLACK);
+      tft.drawChar(x*6, y*Leading, ScrollBuf[x][(y+Scroll) % Lines], COLOR_WHITE, COLOR_BLACK, 1);
     }
     // Tidy up graphics
     tft.fillRect(0, y*Leading+8, 320, 2, COLOR_BLACK);
@@ -6172,10 +6204,12 @@ void ScrollDisplay () {
   // Tidy up graphics
   tft.fillRect(318, 0, 3, 240, COLOR_BLACK);
   for (int x=0; x<Columns; x++) ScrollBuf[x][(Scroll+LastLine) % Lines] = 0;
+ #endif
 }
 
 // Prints a character to display, with cursor, handling control characters
 void Display (char c) {
+  #if defined(gfxsupport)
   static uint8_t line = 0, column = 0;
   // These characters don't affect the cursor
   if (c == 8) {                    // Backspace
@@ -6225,13 +6259,14 @@ void Display (char c) {
   } else if (c == 7) tone(4, 440, 125); // Beep
   // Show cursor
   PlotChar(Cursor, line, column);
+ #endif
 }
 
 // Keyboard **********************************************************************************
 
 void initkybd () {
   // The second I2C port is for the peripherals, for now just keyboard
-  I2Cinit(&Wire1, BOARD_I2C_SDA, BOARD_I2C_SCL, 1);
+  I2Cinit(&Wire1, TDECK_I2C_SDA, TDECK_I2C_SCL, 1);
 }
 
 // Parenthesis highlighting
@@ -6286,13 +6321,68 @@ void ProcessKey (char c) {
 
 // Setup
 
+void initBoard()
+{
+    pinMode(TDECK_SDCARD_CS, OUTPUT);
+    pinMode(TDECK_LORA_CS, OUTPUT);
+    pinMode(TDECK_TFT_CS, OUTPUT);
+
+    digitalWrite(TDECK_SDCARD_CS, HIGH);
+    digitalWrite(TDECK_LORA_CS, HIGH);
+    digitalWrite(TDECK_TFT_CS, HIGH);
+
+    pinMode(TDECK_SPI_MISO, INPUT_PULLUP);
+    SPI.begin(TDECK_SPI_SCK, TDECK_SPI_MISO, TDECK_SPI_MOSI); //SD
+}
+
+bool sd_begin(){
+    digitalWrite(TDECK_SDCARD_CS, HIGH);
+    digitalWrite(TDECK_LORA_CS, HIGH);
+    digitalWrite(TDECK_TFT_CS, HIGH);
+
+    SD.begin(TDECK_SDCARD_CS, SPI, 800000U);
+};
+
+bool initSD()
+{
+    digitalWrite(TDECK_SDCARD_CS, HIGH);
+    digitalWrite(TDECK_LORA_CS, HIGH);
+    digitalWrite(TDECK_TFT_CS, HIGH);
+
+    if (SD.begin(TDECK_SDCARD_CS, SPI, 800000U)) {
+        uint8_t cardType = SD.cardType();
+        if (cardType == CARD_NONE) {
+            Serial.println("No SD_MMC card attached");
+            return false;
+        } else {
+            Serial.print("SD_MMC Card Type: ");
+            if (cardType == CARD_MMC) {
+                Serial.println("MMC");
+            } else if (cardType == CARD_SD) {
+                Serial.println("SDSC");
+            } else if (cardType == CARD_SDHC) {
+                Serial.println("SDHC");
+            } else {
+                Serial.println("UNKNOWN");
+            }
+            uint32_t cardSize = SD.cardSize() / (1024 * 1024);
+            uint32_t cardTotal = SD.totalBytes() / (1024 * 1024);
+            uint32_t cardUsed = SD.usedBytes() / (1024 * 1024);
+            Serial.printf("SD Card Size: %lu MB\n", cardSize);
+            Serial.printf("Total space: %lu MB\n",  cardTotal);
+            Serial.printf("Used space: %lu MB\n",   cardUsed);
+            return true;
+        }
+    }
+    return false;
+}
+
 void initenv () {
   GlobalEnv = NULL;
   tee = bsymbol(TEE);
 }
 
 void initgfx () {
-  #if defined(gfxsupport)
   //turn on the peripherals
   pinMode(TDECK_PERI_POWERON, OUTPUT);
   digitalWrite(TDECK_PERI_POWERON, HIGH);
@@ -6302,7 +6392,6 @@ void initgfx () {
   tft.fillScreen(COLOR_BLACK);
   pinMode(TFT_BACKLITE, OUTPUT);
   digitalWrite(TFT_BACKLITE, HIGH);
-  #endif
 }
 
 // Entry point from the Arduino IDE
@@ -6315,8 +6404,11 @@ void setup () {
   initworkspace();
   initenv();
   initsleep();
+  initBoard();
   initgfx();
   initkybd();
+  initSD();
+   
   pfstring(PSTR("uLisp 4.4d "), pserial); pln(pserial);
 }
 
@@ -6364,7 +6456,9 @@ void loop () {
 
 void ulispreset () {
   // Come here after error
+  #if defined (serialmonitor)
   delay(100); while (Serial.available()) Serial.read();
+  #endif
   clrflag(NOESC); BreakLevel = 0;
   for (int i=0; i<TRACEMAX; i++) TraceDepth[i] = 0;
   #if defined(sdcardsupport)
