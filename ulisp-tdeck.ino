@@ -6332,7 +6332,7 @@ void initBoard()
     SPI.begin(TDECK_SPI_SCK, TDECK_SPI_MISO, TDECK_SPI_MOSI); //SD
 }
 
-bool sd_begin(){
+void sd_begin(){
     digitalWrite(TDECK_SDCARD_CS, HIGH);
     digitalWrite(TDECK_LORA_CS, HIGH);
     digitalWrite(TDECK_TFT_CS, HIGH);
