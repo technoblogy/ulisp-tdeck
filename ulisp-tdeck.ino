@@ -4389,8 +4389,6 @@ object *fn_drawchar (object *args, object *env) {
       if (more != NULL) size = checkinteger(car(more));
     }
   }
-  //this drawchar doesnt take a size argument 
-  tft.setTextSize(size);
   tft.drawChar(checkinteger(first(args)), checkinteger(second(args)), checkchar(third(args)),
     colour, bg, size);
   #else
@@ -6174,7 +6172,6 @@ object *read (gfun_t gfun) {
 // Plot character at absolute character cell position
 void PlotChar (uint8_t ch, uint8_t line, uint8_t column) {
  #if defined(gfxsupport)
-  tft.setTextSize(1);
   uint16_t y = line*Leading;
   uint16_t x = column*6;
   uint8_t off = (ch & 0x80) ? 0x7 : 0;    // Parenthesis highlight
