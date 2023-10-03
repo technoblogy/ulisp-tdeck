@@ -1,5 +1,5 @@
-/* uLisp T-Deck Release 2 - www.ulisp.com
-   David Johnson-Davies - www.technoblogy.com - 25th September 2023
+/* uLisp T-Deck Release 3 - www.ulisp.com
+   David Johnson-Davies - www.technoblogy.com - 3rd October 2023
 
    Licensed under the MIT license: https://opensource.org/licenses/MIT
 */
@@ -13,7 +13,7 @@ const char LispLibrary[] PROGMEM = "";
 #define printfreespace
 #define serialmonitor
 // #define printgcs
-// #define sdcardsupport
+#define sdcardsupport
 #define gfxsupport
 // #define lisplibrary
 // #define extensions
@@ -26,28 +26,29 @@ const char LispLibrary[] PROGMEM = "";
 #include <Wire.h>
 #include <limits.h>
 #include <WiFi.h>
+#include "soc/periph_defs.h" // Not sure why necessary
+#include <I2S.h>
 
 #define COLOR_WHITE 0xFFFF
 #define COLOR_BLACK 0x0000
 #define COLOR_GREEN 0x07e0
 #define TDECK_PERI_POWERON 10
-
 #define TDECK_SPI_MOSI 41
 #define TDECK_SPI_MISO 38
 #define TDECK_SPI_SCK 40
-
 #define TDECK_TFT_CS 12
 #define TDECK_TFT_DC 11
 #define TDECK_TFT_BACKLIGHT 42
 #define TDECK_SDCARD_CS 39
-#define BOARD_I2C_SDA       18
-#define BOARD_I2C_SCL       8
+#define TDECK_I2C_SDA       18
+#define TDECK_I2C_SCL       8
+#define TDECK_LORA_CS        9
 
 #include <Arduino_GFX_Library.h>
 #define GFX_DEV_DEVICE LILYGO_T_DECK
 #define TFT_BACKLITE TDECK_TFT_BACKLIGHT
-Arduino_DataBus *bus = new Arduino_ESP32SPI(TDECK_TFT_DC, TDECK_TFT_CS, TDECK_SPI_SCK, TDECK_SPI_MOSI, TDECK_SPI_MISO);
-Arduino_ST7789 tft = Arduino_ST7789(bus, GFX_NOT_DEFINED, 1, true);
+#include <TFT_eSPI.h>
+TFT_eSPI        tft;
 
 #if defined(sdcardsupport)
   #include <SD.h>
@@ -558,8 +559,8 @@ int EpromReadInt (int *addr) {
 
 unsigned int saveimage (object *arg) {
 #if defined(sdcardsupport)
-  unsigned int imagesize = compactimage(&arg);
-  SD.begin(SDCARD_SS_PIN);
+  unsigned int imagesize = compactimage(&arg); 
+  sd_begin();
   File file;
   if (stringp(arg)) {
     char buffer[BUFFERSIZE];
@@ -632,7 +633,7 @@ unsigned int saveimage (object *arg) {
 
 unsigned int loadimage (object *arg) {
 #if defined(sdcardsupport)
-  SD.begin(SDCARD_SS_PIN);
+  sd_begin();
   File file;
   if (stringp(arg)) {
     char buffer[BUFFERSIZE];
@@ -704,7 +705,7 @@ unsigned int loadimage (object *arg) {
 
 void autorunimage () {
 #if defined(sdcardsupport)
-  SD.begin(SDCARD_SS_PIN);
+  sd_begin(); 
   File file = SD.open("/ULISP.IMG");
   if (!file) error2(PSTR("problem autorunning from SD card"));
   object *autorun = (object *)SDReadInt(file);
@@ -1392,7 +1393,7 @@ object *apropos (object *arg, bool print) {
       }
     }
     globals = cdr(globals);
-    if (!tstflag(NOESC)) testescape();
+    testescape();
   }
   // Built-in?
   int entries = tablesize(0) + tablesize(1);
@@ -1409,7 +1410,7 @@ object *apropos (object *arg, bool print) {
         cdr(ptr) = cons(bsymbol(i), NULL); ptr = cdr(ptr);
       }
     }
-    if (!tstflag(NOESC)) testescape();
+    testescape();
   }
   return cdr(result);
 }
@@ -1839,47 +1840,30 @@ pfun_t pstreamfun (object *args) {
 // Check pins
 
 void checkanalogread (int pin) {
-#if defined(ESP8266)
-  if (pin!=17) error(PSTR("invalid pin"), number(pin));
-#elif defined(ESP32) || defined(ARDUINO_ESP32_DEV)
-  if (!(pin==0 || pin==2 || pin==4 || (pin>=12 && pin<=15) || (pin>=25 && pin<=27) || (pin>=32 && pin<=36) || pin==39))
-    error(PSTR("invalid pin"), number(pin));
-#elif defined(ARDUINO_FEATHER_ESP32)
-  if (!(pin==4 || (pin>=12 && pin<=15) || (pin>=25 && pin<=27) || (pin>=32 && pin<=36) || pin==39))
-    error(PSTR("invalid pin"), number(pin));
-#elif defined(ARDUINO_ADAFRUIT_FEATHER_ESP32S2) || defined(ARDUINO_ADAFRUIT_FEATHER_ESP32S2_TFT)
-  if (!(pin==8 || (pin>=14 && pin<=18))) error(PSTR("invalid pin"), number(pin));
-#elif defined(ARDUINO_ADAFRUIT_QTPY_ESP32_PICO)
-  if (!(pin==4 || pin==7 || (pin>=12 && pin<=15) || (pin>=25 && pin<=27) || (pin>=32 && pin<=33))) error(PSTR("invalid pin"), number(pin));
-#elif defined(ARDUINO_ADAFRUIT_QTPY_ESP32S2)
-  if (!((pin>=5 && pin<=9) || (pin>=16 && pin<=18))) error(PSTR("invalid pin"), number(pin));
-#elif defined(ARDUINO_ADAFRUIT_QTPY_ESP32C3)
-  if (!((pin>=0 && pin<=1) || (pin>=3 && pin<=5))) error(PSTR("invalid pin"), number(pin));
-#elif defined(ARDUINO_FEATHERS2) | defined(ARDUINO_ESP32S2_DEV)
-  if (!((pin>=1 && pin<=20))) error(PSTR("invalid pin"), number(pin));
-#elif defined(ARDUINO_ESP32C3_DEV)
-  if (!((pin>=0 && pin<=5))) error(PSTR("invalid pin"), number(pin));
-#elif defined(ARDUINO_ESP32S3_DEV)
+#if defined(ARDUINO_ESP32S3_DEV)
   if (!((pin>=1 && pin<=20))) error(PSTR("invalid pin"), number(pin));
 #endif
 }
 
 void checkanalogwrite (int pin) {
-#if defined(ESP8266)
-  if (!(pin>=0 && pin<=16)) error(PSTR("invalid pin"), number(pin));
-#elif defined(ESP32) || defined(ARDUINO_FEATHER_ESP32) || defined(ARDUINO_ESP32_DEV) || defined(ARDUINO_ADAFRUIT_QTPY_ESP32_PICO)
-  if (!(pin>=25 && pin<=26)) error(PSTR("invalid pin"), number(pin));
-#elif defined(ARDUINO_ADAFRUIT_FEATHER_ESP32S2) || defined(ARDUINO_ADAFRUIT_FEATHER_ESP32S2_TFT) || defined(ARDUINO_ADAFRUIT_QTPY_ESP32S2) || defined(ARDUINO_FEATHERS2) || defined(ARDUINO_ESP32S2_DEV)
-  if (!(pin>=17 && pin<=18)) error(PSTR("invalid pin"), number(pin));
-#elif defined(ARDUINO_ESP32C3_DEV) | defined(ARDUINO_ESP32S3_DEV) | defined(ARDUINO_ADAFRUIT_QTPY_ESP32C3)
-  error2(ANALOGWRITE, PSTR("not supported"));
+#if defined(ARDUINO_ESP32S3_DEV)
+  error2(PSTR("not supported"));
 #endif
 }
 
 // Note
 
-void tone (int pin, int note) {
-  (void) pin, (void) note;
+void tone (int pin, int freq, uint16_t duration) {
+  const int samplerate = 8000;
+  int halfwave = samplerate / freq, count = 0, amplitude = 500;
+  unsigned long start = millis();
+  if (!I2S.begin(I2S_PHILIPS_MODE, samplerate, 16)) error2(PSTR("error with i2s"));
+  while (millis() < start + duration) {
+    if (count % halfwave == 0) amplitude = -1 * amplitude;
+    I2S.write(amplitude); I2S.write(amplitude);
+    count++;
+  }
+  I2S.end();
 }
 
 void noTone (int pin) {
@@ -1888,10 +1872,10 @@ void noTone (int pin) {
 
 const int scale[] PROGMEM = {4186,4435,4699,4978,5274,5588,5920,6272,6645,7040,7459,7902};
 
-void playnote (int pin, int note, int octave) {
+void playnote (int pin, int note, int octave, uint16_t duration) {
   int prescaler = 8 - octave - note/12;
   if (prescaler<0 || prescaler>8) error(PSTR("octave out of range"), number(prescaler));
-  tone(pin, pgm_read_word(&scale[note%12])>>prescaler);
+  tone(pin, pgm_read_word(&scale[note%12])>>prescaler, duration);
 }
 
 void nonote (int pin) {
@@ -1953,30 +1937,37 @@ void superprint (object *form, int lm, pfun_t pfun) {
   if (atom(form)) {
     if (symbolp(form) && form->name == sym(NOTHING)) printsymbol(form, pfun);
     else printobject(form, pfun);
+  } else if (quoted(form)) {
+    pfun('\'');
+    superprint(car(cdr(form)), lm + 1, pfun);
+  } else {
+    lm = lm + PPINDENT;
+    bool super = (subwidth(form, PPWIDTH - lm - PPINDENT) < 0);
+    int special = 0, extra = 0; bool separate = true;
+    object *arg = car(form);
+    if (symbolp(arg) && builtinp(arg->name)) {
+      uint8_t minmax = getminmax(builtin(arg->name));
+      if (minmax == 0327 || minmax == 0313) special = 2; // defun, setq, setf, defvar
+      else if (minmax == 0317 || minmax == 0017 || minmax == 0117 || minmax == 0123) special = 1;
+      else if (minmax == 0027) { extra = 2; special = 1; } // let
+      else if (minmax == 0037) { extra = 3; special = 1; } // let*
+    }
+    while (form != NULL) {
+      if (atom(form)) { pfstring(PSTR(" . "), pfun); printobject(form, pfun); pfun(')'); return; }
+      else if (separate) { 
+        pfun('(');
+        separate = false;
+      } else if (special) {
+        pfun(' ');
+        special--; 
+      } else if (!super) {
+        pfun(' ');
+      } else { pln(pfun); indent(lm, ' ', pfun); }
+      superprint(car(form), lm+extra, pfun);
+      form = cdr(form);
+    }
+    pfun(')');
   }
-  else if (quoted(form)) { pfun('\''); superprint(car(cdr(form)), lm + 1, pfun); }
-  else if (subwidth(form, ppwidth - lm) >= 0) supersub(form, lm + PPINDENT, 0, pfun);
-  else supersub(form, lm + PPINDENT, 1, pfun);
-}
-
-void supersub (object *form, int lm, int super, pfun_t pfun) {
-  int special = 0, separate = 1;
-  object *arg = car(form);
-  if (symbolp(arg) && builtinp(arg->name)) {
-    uint8_t minmax = getminmax(builtin(arg->name));
-    if (minmax == 0327 || minmax == 0313) special = 2; // defun, setq, setf, defvar
-    else if (minmax == 0317 || minmax == 0017 || minmax == 0117 || minmax == 0123) special = 1;
-  }
-  while (form != NULL) {
-    if (atom(form)) { pfstring(PSTR(" . "), pfun); printobject(form, pfun); pfun(')'); return; }
-    else if (separate) { pfun('('); separate = 0; }
-    else if (special) { pfun(' '); special--; }
-    else if (!super) pfun(' ');
-    else { pln(pfun); indent(lm, ' ', pfun); }
-    superprint(car(form), lm, pfun);
-    form = cdr(form);
-  }
-  pfun(')'); return;
 }
 
 object *edit (object *fun) {
@@ -2062,7 +2053,7 @@ object *sp_loop (object *args, object *env) {
       }
       args = cdr(args);
     }
-    if (!tstflag(NOESC)) testescape();
+    testescape();
   }
 }
 
@@ -2371,13 +2362,13 @@ object *sp_withi2c (object *args, object *env) {
   if (address > 127){
     //i2c1 gets reassigned pins
     port = &Wire1;
-    I2Cinit(port, BOARD_I2C_SDA, BOARD_I2C_SCL, 1); // Pullups
+    I2Cinit(port, TDECK_I2C_SDA, TDECK_I2C_SCL, 1); // Pullups
   }else{
     I2Cinit(port, 1); // Pullups
   }
   #else
   I2Cinit(port, 1); // Pullups
-    // I2Cinit(port, BOARD_I2C_SDA, BOARD_I2C_SCL, 1); // Pullups
+    // I2Cinit(port, TDECK_I2C_SDA, TDECK_I2C_SCL, 1); // Pullups
   #endif
   object *pair = cons(var, (I2Cstart(port, address & 0x7F, read)) ? stream(I2CSTREAM, address) : nil);
   push(pair,env);
@@ -2433,7 +2424,7 @@ object *sp_withsdcard (object *args, object *env) {
   Context = temp;
   if (!stringp(filename)) error(PSTR("filename is not a string"), filename);
   params = cdr(params);
-  SD.begin(SDCARD_SS_PIN);
+  sd_begin();
   int mode = 0;
   if (params != NULL && first(params) != NULL) mode = checkinteger(first(params));
   const char *oflag = FILE_READ;
@@ -2463,7 +2454,7 @@ object *sp_withsdcard (object *args, object *env) {
 object *fn_directory (object *args, object *env) {
   (void) env;
   #if defined(sdcardsupport)
-  SD.begin(SDCARD_SS_PIN);
+  sd_begin();
   File root = SD.open("/");
   if (!root) error2(PSTR("problem reading from SD card"));
   object *result = cons(NULL, NULL);
@@ -3820,13 +3811,19 @@ object *fn_note (object *args, object *env) {
   (void) env;
   static int pin = 255;
   if (args != NULL) {
-    pin = checkinteger(first(args));
-    int note = 48, octave = 0;
-    if (cdr(args) != NULL) {
-      note = checkinteger(second(args));
-      if (cddr(args) != NULL) octave = checkinteger(third(args));
+    pin = checkinteger(car(args));
+    int note = 48, octave = 0; uint16_t duration = 0; // Duration mandatory on T-Deck
+    args = cdr(args);
+    if (args != NULL) {
+      note = checkinteger(car(args));
+      args = cdr(args);
+      if (args != NULL) {
+        octave = checkinteger(car(args));
+        args = cdr(args);
+        if (args != NULL) duration = checkinteger(car(args));
+      }
     }
-    playnote(pin, note, octave);
+    playnote(pin, note, octave, duration);
   } else nonote(pin);
   return nil;
 }
@@ -4361,10 +4358,8 @@ object *fn_drawchar (object *args, object *env) {
       if (more != NULL) size = checkinteger(car(more));
     }
   }
-  //this drawchar doesnt take a size argument 
-  tft.setTextSize(size);
   tft.drawChar(checkinteger(first(args)), checkinteger(second(args)), checkchar(third(args)),
-    colour, bg);
+    colour, bg, size);
   #else
   (void) args;
   #endif
@@ -4786,8 +4781,7 @@ const char doc47[] PROGMEM = "(with-sd-card (str filename [mode]) form*)\n"
 "Evaluates the forms with str bound to an sd-stream reading from or writing to the file filename.\n"
 "If mode is omitted the file is read, otherwise 0 means read, 1 write-append, or 2 write-overwrite.";
 const char doc47a[] PROGMEM = "(directory)\n"
-"Reads the directory at the top level of an SD card and returns\n"
-"a list of the filenames.";
+"Reads the directory at the top level of an SD card and returns a list of the filenames.";
 const char doc48[] PROGMEM = "(progn form*)\n"
 "Evaluates several forms grouped together into a block, and returns the result of evaluating the last form.";
 const char doc49[] PROGMEM = "(if test then [else])\n"
@@ -5104,7 +5098,7 @@ const char doc185[] PROGMEM = "(millis)\n"
 const char doc186[] PROGMEM = "(sleep secs)\n"
 "Puts the processor into a low-power sleep mode for secs.\n"
 "Only supported on some platforms. On other platforms it does delay(1000*secs).";
-const char doc187[] PROGMEM = "(note [pin] [note] [octave])\n"
+const char doc187[] PROGMEM = "(note [pin] [note] [octave] [duration])\n"
 "Generates a square wave on pin.\n"
 "The argument note represents the note in the well-tempered scale, from 0 to 11,\n"
 "where 0 represents C, 1 represents C#, and so on.\n"
@@ -5393,7 +5387,7 @@ const tbl_entry_t lookup_table[] PROGMEM = {
   { string184, fn_delay, 0211, doc184 },
   { string185, fn_millis, 0200, doc185 },
   { string186, fn_sleep, 0201, doc186 },
-  { string187, fn_note, 0203, doc187 },
+  { string187, fn_note, 0204, doc187 },
   { string188, fn_edit, 0211, doc188 },
   { string189, fn_pprint, 0212, doc189 },
   { string190, fn_pprintall, 0201, doc190 },
@@ -6145,37 +6139,44 @@ object *read (gfun_t gfun) {
 
 // Plot character at absolute character cell position
 void PlotChar (uint8_t ch, uint8_t line, uint8_t column) {
-  tft.setTextSize(1);
+ #if defined(gfxsupport)
   uint16_t y = line*Leading;
   uint16_t x = column*6;
   uint8_t off = (ch & 0x80) ? 0x7 : 0;    // Parenthesis highlight
   ScrollBuf[column][(line+Scroll) % Lines] = ch;
   ch = (ch & 0x7f);
   if (off) {
-    tft.drawChar(x, y, ch, COLOR_BLACK, COLOR_GREEN);
+    tft.drawChar(x, y, ch, COLOR_BLACK, COLOR_GREEN, 1);
   } else {
-    tft.drawChar(x, y, ch, COLOR_WHITE, COLOR_BLACK);
+    tft.drawChar(x, y, ch, COLOR_WHITE, COLOR_BLACK, 1);
   }
+#endif
 }
+
 
 // Clears the bottom line and then scrolls the display up by one line
 void ScrollDisplay () {
+ #if defined(gfxsupport)
   tft.fillRect(0, 240-Leading, 320, 10, COLOR_BLACK);
-  Scroll = (Scroll + 1) % Lines;
-  for (uint8_t y = 0; y < Lines-1; y++) {
-    for (uint8_t x = 0; x < Columns; x++) {
-      tft.drawChar(x*6, y*Leading, ScrollBuf[x][(y+Scroll) % Lines], COLOR_WHITE, COLOR_BLACK);
+  for (uint8_t x = 0; x < Columns; x++) {
+    char c = ScrollBuf[x][Scroll];
+    for (uint8_t y = 0; y < Lines-1; y++) {
+      char c2 = ScrollBuf[x][(y+Scroll+1) % Lines];
+      if (c != c2) tft.drawChar(x*6, y*Leading, c2, COLOR_WHITE, COLOR_BLACK, 1);
+      c = c2;
     }
-    // Tidy up graphics
-    tft.fillRect(0, y*Leading+8, 320, 2, COLOR_BLACK);
   }
   // Tidy up graphics
+  for (uint8_t y = 0; y < Lines-1; y++) tft.fillRect(0, y*Leading+8, 320, 2, COLOR_BLACK);
   tft.fillRect(318, 0, 3, 240, COLOR_BLACK);
-  for (int x=0; x<Columns; x++) ScrollBuf[x][(Scroll+LastLine) % Lines] = 0;
+  for (int x=0; x<Columns; x++) ScrollBuf[x][Scroll] = 0;
+  Scroll = (Scroll + 1) % Lines;
+ #endif
 }
 
 // Prints a character to display, with cursor, handling control characters
 void Display (char c) {
+  #if defined(gfxsupport)
   static uint8_t line = 0, column = 0;
   // These characters don't affect the cursor
   if (c == 8) {                    // Backspace
@@ -6222,16 +6223,17 @@ void Display (char c) {
   } else if (c == '\n') {          // Newline
     column = 0;
     if (line == LastLine) ScrollDisplay(); else line++;
-  } else if (c == 7) tone(4, 440, 125); // Beep
+  } else if (c == 7) tone(0, 440, 125); // Beep
   // Show cursor
   PlotChar(Cursor, line, column);
+ #endif
 }
 
 // Keyboard **********************************************************************************
 
 void initkybd () {
   // The second I2C port is for the peripherals, for now just keyboard
-  I2Cinit(&Wire1, BOARD_I2C_SDA, BOARD_I2C_SCL, 1);
+  I2Cinit(&Wire1, TDECK_I2C_SDA, TDECK_I2C_SCL, 1);
 }
 
 // Parenthesis highlighting
@@ -6286,13 +6288,30 @@ void ProcessKey (char c) {
 
 // Setup
 
+void initBoard () {
+  pinMode(TDECK_SDCARD_CS, OUTPUT);
+  pinMode(TDECK_LORA_CS, OUTPUT);
+  pinMode(TDECK_TFT_CS, OUTPUT);
+  digitalWrite(TDECK_SDCARD_CS, HIGH);
+  digitalWrite(TDECK_LORA_CS, HIGH);
+  digitalWrite(TDECK_TFT_CS, HIGH);
+  pinMode(TDECK_SPI_MISO, INPUT_PULLUP);
+  SPI.begin(TDECK_SPI_SCK, TDECK_SPI_MISO, TDECK_SPI_MOSI); //SD
+}
+
+void sd_begin () {
+  digitalWrite(TDECK_SDCARD_CS, HIGH);
+  digitalWrite(TDECK_LORA_CS, HIGH);
+  digitalWrite(TDECK_TFT_CS, HIGH);
+  SD.begin(TDECK_SDCARD_CS, SPI, 800000U);
+};
+
 void initenv () {
   GlobalEnv = NULL;
   tee = bsymbol(TEE);
 }
 
 void initgfx () {
-  #if defined(gfxsupport)
   //turn on the peripherals
   pinMode(TDECK_PERI_POWERON, OUTPUT);
   digitalWrite(TDECK_PERI_POWERON, HIGH);
@@ -6302,7 +6321,10 @@ void initgfx () {
   tft.fillScreen(COLOR_BLACK);
   pinMode(TFT_BACKLITE, OUTPUT);
   digitalWrite(TFT_BACKLITE, HIGH);
-  #endif
+}
+
+void initsound () {
+  I2S.setAllPins(7, 5, 6, 6, 6); // sckPin, fsPin, sdPin, outSdPin, inSdPin
 }
 
 // Entry point from the Arduino IDE
@@ -6315,8 +6337,10 @@ void setup () {
   initworkspace();
   initenv();
   initsleep();
+  initBoard();
   initgfx();
   initkybd();
+  initsound();
   pfstring(PSTR("uLisp 4.4d "), pserial); pln(pserial);
 }
 
@@ -6364,7 +6388,9 @@ void loop () {
 
 void ulispreset () {
   // Come here after error
+  #if defined (serialmonitor)
   delay(100); while (Serial.available()) Serial.read();
+  #endif
   clrflag(NOESC); BreakLevel = 0;
   for (int i=0; i<TRACEMAX; i++) TraceDepth[i] = 0;
   #if defined(sdcardsupport)
