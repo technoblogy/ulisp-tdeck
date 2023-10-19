@@ -1,5 +1,5 @@
-/* uLisp T-Deck Release 3 - www.ulisp.com
-   David Johnson-Davies - www.technoblogy.com - 3rd October 2023
+/* uLisp T-Deck Release 4 - www.ulisp.com
+   David Johnson-Davies - www.technoblogy.com - 19th October 2023
 
    Licensed under the MIT license: https://opensource.org/licenses/MIT
 */
@@ -28,6 +28,7 @@ const char LispLibrary[] PROGMEM = "";
 #include <WiFi.h>
 #include "soc/periph_defs.h" // Not sure why necessary
 #include <I2S.h>
+#include <TFT_eSPI.h>
 
 #define COLOR_WHITE 0xFFFF
 #define COLOR_BLACK 0x0000
@@ -40,15 +41,14 @@ const char LispLibrary[] PROGMEM = "";
 #define TDECK_TFT_DC 11
 #define TDECK_TFT_BACKLIGHT 42
 #define TDECK_SDCARD_CS 39
-#define TDECK_I2C_SDA       18
-#define TDECK_I2C_SCL       8
-#define TDECK_LORA_CS        9
-
-#include <Arduino_GFX_Library.h>
+#define TDECK_I2C_SDA 18
+#define TDECK_I2C_SCL 8
+#define TDECK_LORA_CS 9
+#define TDECK_KEYBOARD_INT 46
 #define GFX_DEV_DEVICE LILYGO_T_DECK
 #define TFT_BACKLITE TDECK_TFT_BACKLIGHT
-#include <TFT_eSPI.h>
-TFT_eSPI        tft;
+
+TFT_eSPI tft;
 
 #if defined(sdcardsupport)
   #include <SD.h>
@@ -67,8 +67,6 @@ TFT_eSPI        tft;
   #define LITTLEFS
   #include <LittleFS.h>
   #define SDCARD_SS_PIN 39
-  #define LED_BUILTIN 13
-
 #else
 #error "Board not supported!"
 #endif
@@ -2057,12 +2055,6 @@ object *sp_loop (object *args, object *env) {
   }
 }
 
-object *sp_return (object *args, object *env) {
-  object *result = eval(tf_progn(args,env), env);
-  setflag(RETURNFLAG);
-  return result;
-}
-
 object *sp_push (object *args, object *env) {
   int bit;
   checkargs(args);
@@ -2075,7 +2067,10 @@ object *sp_push (object *args, object *env) {
 object *sp_pop (object *args, object *env) {
   int bit;
   checkargs(args);
-  object **loc = place(first(args), env, &bit);
+  object *arg = first(args);
+  if (arg == NULL) error(invalidarg, arg);
+  object **loc = place(arg, env, &bit);
+  if (!consp(*loc)) error(notalist, *loc);
   object *result = car(*loc);
   pop(*loc);
   return result;
@@ -2478,7 +2473,7 @@ object *tf_progn (object *args, object *env) {
   object *more = cdr(args);
   while (more != NULL) {
     object *result = eval(car(args),env);
-    if (tstflag(RETURNFLAG)) return result;
+    if (tstflag(RETURNFLAG)) return quote(result);
     args = more;
     more = cdr(args);
   }
@@ -3530,6 +3525,12 @@ object *fn_logbitp (object *args, object *env) {
 
 object *fn_eval (object *args, object *env) {
   return eval(first(args), env);
+}
+
+object *fn_return (object *args, object *env) {
+  (void) env;
+  setflag(RETURNFLAG);
+  if (args == NULL) return nil; else return first(args);
 }
 
 object *fn_globals (object *args, object *env) {
@@ -5230,7 +5231,7 @@ const tbl_entry_t lookup_table[] PROGMEM = {
   { string28, sp_or, 0307, doc28 },
   { string29, sp_setq, 0327, doc29 },
   { string30, sp_loop, 0307, doc30 },
-  { string31, sp_return, 0307, doc31 },
+  { string31, fn_return, 0101, doc31 },
   { string32, sp_push, 0322, doc32 },
   { string33, sp_pop, 0311, doc33 },
   { string34, sp_incf, 0312, doc34 },
@@ -5505,8 +5506,7 @@ void testescape () {
 #if defined serialmonitor
   if (Serial.available() && Serial.read() == '~') error2(PSTR("escape!"));
 #endif
-  Wire1.requestFrom(0x55, 1);
-  if (Wire1.available() && Wire1.read() == '@') error2(PSTR("escape!"));
+  if (digitalRead(0) == LOW) error2(PSTR("escape!")); // Push Trackball
 }
 
 bool keywordp (object *obj) {
@@ -6142,28 +6142,31 @@ void PlotChar (uint8_t ch, uint8_t line, uint8_t column) {
  #if defined(gfxsupport)
   uint16_t y = line*Leading;
   uint16_t x = column*6;
-  uint8_t off = (ch & 0x80) ? 0x7 : 0;    // Parenthesis highlight
   ScrollBuf[column][(line+Scroll) % Lines] = ch;
-  ch = (ch & 0x7f);
-  if (off) {
-    tft.drawChar(x, y, ch, COLOR_BLACK, COLOR_GREEN, 1);
+  if (ch & 0x80) {
+    tft.drawChar(x, y, ch & 0x7f, COLOR_BLACK, COLOR_GREEN, 1);
   } else {
-    tft.drawChar(x, y, ch, COLOR_WHITE, COLOR_BLACK, 1);
+    tft.drawChar(x, y, ch & 0x7f, COLOR_WHITE, COLOR_BLACK, 1);
   }
 #endif
 }
 
-
 // Clears the bottom line and then scrolls the display up by one line
 void ScrollDisplay () {
- #if defined(gfxsupport)
+  #if defined(gfxsupport)
   tft.fillRect(0, 240-Leading, 320, 10, COLOR_BLACK);
   for (uint8_t x = 0; x < Columns; x++) {
     char c = ScrollBuf[x][Scroll];
     for (uint8_t y = 0; y < Lines-1; y++) {
       char c2 = ScrollBuf[x][(y+Scroll+1) % Lines];
-      if (c != c2) tft.drawChar(x*6, y*Leading, c2, COLOR_WHITE, COLOR_BLACK, 1);
-      c = c2;
+      if (c != c2) {
+        if (c2 & 0x80) {
+          tft.drawChar(x*6, y*Leading, c2 & 0x7f, COLOR_BLACK, COLOR_GREEN, 1);
+        } else {
+          tft.drawChar(x*6, y*Leading, c2 & 0x7f, COLOR_WHITE, COLOR_BLACK, 1);
+        }
+        c = c2;
+      }
     }
   }
   // Tidy up graphics
@@ -6171,13 +6174,19 @@ void ScrollDisplay () {
   tft.fillRect(318, 0, 3, 240, COLOR_BLACK);
   for (int x=0; x<Columns; x++) ScrollBuf[x][Scroll] = 0;
   Scroll = (Scroll + 1) % Lines;
- #endif
+  #endif
 }
+
+const char STX = 2; // Code to invert text
+const char ETX = 3; // Code to invert text
+const char VT = 11; // Vertical tab
+const char BEEP = 7;
 
 // Prints a character to display, with cursor, handling control characters
 void Display (char c) {
   #if defined(gfxsupport)
   static uint8_t line = 0, column = 0;
+  static bool invert = false;
   // These characters don't affect the cursor
   if (c == 8) {                    // Backspace
     //PlotChar(' ', line+Scroll, Column); //hide cursor?
@@ -6200,6 +6209,8 @@ void Display (char c) {
     else PlotChar(')' | 0x80, line, column);
     return;
   }
+  if (c == STX) { invert = true; return; }
+  if (c == ETX) { invert = false; return; }
   // Hide cursor
   PlotChar(' ', line, column);
   if (c == 0x7F) {                 // DEL
@@ -6207,7 +6218,7 @@ void Display (char c) {
       line--; column = LastColumn;
     } else column--;
   } else if ((c & 0x7f) >= 32) {   // Normal character
-    PlotChar(c, line, column++);
+    if (invert) PlotChar(c | 0x80, line, column++); else PlotChar(c, line, column++);
     if (column > LastColumn) {
       column = 0;
       if (line == LastLine) ScrollDisplay(); else line++;
@@ -6223,7 +6234,9 @@ void Display (char c) {
   } else if (c == '\n') {          // Newline
     column = 0;
     if (line == LastLine) ScrollDisplay(); else line++;
-  } else if (c == 7) tone(0, 440, 125); // Beep
+  } else if (c == VT) {
+    column = 0; Scroll = 0; line = LastLine - 2;
+  } else if (c == BEEP) tone(0, 440, 125); // Beep
   // Show cursor
   PlotChar(Cursor, line, column);
  #endif
@@ -6341,6 +6354,7 @@ void setup () {
   initgfx();
   initkybd();
   initsound();
+  pinMode(0, INPUT_PULLUP);
   pfstring(PSTR("uLisp 4.4d "), pserial); pln(pserial);
 }
 
