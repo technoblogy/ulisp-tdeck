@@ -1,5 +1,5 @@
-/* uLisp T-Deck Release 4 - www.ulisp.com
-   David Johnson-Davies - www.technoblogy.com - 19th October 2023
+/* uLisp T-Deck Release 5 - www.ulisp.com
+   David Johnson-Davies - www.technoblogy.com - 28th October 2023
 
    Licensed under the MIT license: https://opensource.org/licenses/MIT
 */
@@ -169,7 +169,7 @@ typedef uint16_t builtin_t;
 
 enum builtins: builtin_t { NIL, TEE, NOTHING, OPTIONAL, INITIALELEMENT, ELEMENTTYPE, BIT, AMPREST, LAMBDA, LET, LETSTAR,
 CLOSURE, PSTAR, QUOTE, DEFUN, DEFVAR, CAR, FIRST, CDR, REST, NTH, AREF, STRINGFN, PINMODE, DIGITALWRITE,
-ANALOGREAD, REGISTER, FORMAT, 
+ANALOGREAD, REGISTER, FORMAT, HIGHLIGHT,
  };
 
 // Global variables
@@ -1931,40 +1931,61 @@ int subwidthlist (object *form, int w) {
   return w;
 }
 
-void superprint (object *form, int lm, pfun_t pfun) {
+bool highlighted (object *obj) {
+  return (consp(obj) && car(obj) != NULL && car(obj)->name == sym(HIGHLIGHT));
+}
+
+const char STX = 2; // Code to invert text
+const char ETX = 3; // Code to invert text
+
+void superprint (object *form, int lm, bool match, pfun_t pfun) {
   if (atom(form)) {
     if (symbolp(form) && form->name == sym(NOTHING)) printsymbol(form, pfun);
     else printobject(form, pfun);
   } else if (quoted(form)) {
     pfun('\'');
-    superprint(car(cdr(form)), lm + 1, pfun);
+    superprint(car(cdr(form)), lm + 1, match, pfun);
+  } else if (highlighted(form)) {
+    pfun(STX);
+    superprint(car(cdr(form)), lm, true, pfun);
+    pfun(ETX);
   } else {
     lm = lm + PPINDENT;
-    bool super = (subwidth(form, PPWIDTH - lm - PPINDENT) < 0);
-    int special = 0, extra = 0; bool separate = true;
+    bool fits = (subwidth(form, PPWIDTH - lm - PPINDENT) >= 0);
+    int special = 0; bool separate = true, hilite = false;
     object *arg = car(form);
     if (symbolp(arg) && builtinp(arg->name)) {
       uint8_t minmax = getminmax(builtin(arg->name));
       if (minmax == 0327 || minmax == 0313) special = 2; // defun, setq, setf, defvar
       else if (minmax == 0317 || minmax == 0017 || minmax == 0117 || minmax == 0123) special = 1;
-      else if (minmax == 0027) { extra = 2; special = 1; } // let
-      else if (minmax == 0037) { extra = 3; special = 1; } // let*
     }
     while (form != NULL) {
       if (atom(form)) { pfstring(PSTR(" . "), pfun); printobject(form, pfun); pfun(')'); return; }
-      else if (separate) { 
+      object *arg = car(form);
+      if (symbolp(arg) && arg->name == sym(HIGHLIGHT)) {
+        hilite = true;
+        form = car(cdr(form));
+      }
+      if (separate) { 
         pfun('(');
         separate = false;
-      } else if (special) {
-        pfun(' ');
+      } else if (special != 0) {
+        if (hilite) pfun(' ' | 0x80); else pfun(' ');
         special--; 
-      } else if (!super) {
-        pfun(' ');
-      } else { pln(pfun); indent(lm, ' ', pfun); }
-      superprint(car(form), lm+extra, pfun);
-      form = cdr(form);
+      } else if (fits) {
+        if (hilite) pfun(' ' | 0x80); else pfun(' ');
+      } else {
+        pln(pfun);
+        if (match) pfun(ETX);
+        indent(lm-1, ' ', pfun);
+        if (hilite) pfun(' ' | 0x80); else pfun(' ');
+        if (match) pfun(STX);
+      }
+      hilite = false;
+      if (form != NULL) { superprint(car(form), lm, match, pfun); form = cdr(form); }
     }
     pfun(')');
+    if (!match) pfun(ETX);
   }
 }
 
@@ -1975,7 +1996,7 @@ object *edit (object *fun) {
     if (c == 'q') setflag(EXITEDITOR);
     else if (c == 'b') return fun;
     else if (c == 'r') fun = read(gserial);
-    else if (c == '\n') { pfl(pserial); superprint(fun, 0, pserial); pln(pserial); }
+    else if (c == '\n') { pfl(pserial); superprint(fun, 0, false, pserial); pln(pserial); }
     else if (c == 'c') fun = cons(read(gserial), fun);
     else if (atom(fun)) pserial('!');
     else if (c == 'd') fun = cons(car(fun), edit(cdr(fun)));
@@ -3686,7 +3707,7 @@ object *fn_gc (object *obj, object *env) {
 
 object *fn_room (object *args, object *env) {
   (void) args, (void) env;
-  return number(Freespace);
+  return number(Freespace + 1);
 }
 
 object *fn_saveimage (object *args, object *env) {
@@ -3861,7 +3882,7 @@ object *fn_pprint (object *args, object *env) {
   if (pfun == gfxwrite) ppwidth = GFXPPWIDTH;
   #endif
   pln(pfun);
-  superprint(obj, 0, pfun);
+  superprint(obj, 0, false, pfun);
   ppwidth = PPWIDTH;
   return bsymbol(NOTHING);
 }
@@ -3879,9 +3900,9 @@ object *fn_pprintall (object *args, object *env) {
     object *val = cdr(pair);
     pln(pfun);
     if (consp(val) && symbolp(car(val)) && builtin(car(val)->name) == LAMBDA) {
-      superprint(cons(bsymbol(DEFUN), cons(var, cdr(val))), 0, pfun);
+      superprint(cons(bsymbol(DEFUN), cons(var, cdr(val))), 0, false, pfun);
     } else {
-      superprint(cons(bsymbol(DEFVAR), cons(var, cons(quote(val), NULL))), 0, pfun);
+      superprint(cons(bsymbol(DEFVAR), cons(var, cons(quote(val), NULL))), 0, false, pfun);
     }
     pln(pfun);
     testescape();
@@ -4440,6 +4461,23 @@ object *fn_invertdisplay (object *args, object *env) {
   return nil;
 }
 
+char getKey () {
+  char temp;
+  do {
+    Wire1.requestFrom(0x55, 1);
+    while (!Wire1.available());
+    temp = Wire1.read();
+  } while ((temp == 0) || (temp ==255));
+  if (temp == '@') temp = '~';
+  if (temp == '_') temp = '\\';
+  return temp;
+}
+
+object *fn_getkey (object *args, object *env) {
+  (void) env, (void) args;
+  return character(getKey());
+}
+
 // Built-in symbol names
 const char string0[] PROGMEM = "nil";
 const char string1[] PROGMEM = "t";
@@ -4469,6 +4507,7 @@ const char string24[] PROGMEM = "digitalwrite";
 const char string25[] PROGMEM = "analogread";
 const char string26[] PROGMEM = "register";
 const char string27[] PROGMEM = "format";
+const char string27a[] PROGMEM = "highlight";
 const char string28[] PROGMEM = "or";
 const char string29[] PROGMEM = "setq";
 const char string30[] PROGMEM = "loop";
@@ -4668,6 +4707,7 @@ const char string222[] PROGMEM = "set-text-wrap";
 const char string223[] PROGMEM = "fill-screen";
 const char string224[] PROGMEM = "set-rotation";
 const char string225[] PROGMEM = "invert-display";
+const char string225a[] PROGMEM = "get-key";
 const char string226[] PROGMEM = ":led-builtin";
 const char string227[] PROGMEM = ":high";
 const char string228[] PROGMEM = ":low";
@@ -5197,6 +5237,8 @@ const char doc224[] PROGMEM = "(set-rotation option)\n"
 "Sets the display orientation for subsequent graphics commands; values are 0, 1, 2, or 3.";
 const char doc225[] PROGMEM = "(invert-display boolean)\n"
 "Mirror-images the display.";
+const char doc225a[] PROGMEM = "(get-key)\n"
+"Waits for a key press and returns it as a character.";
 
 // Built-in symbol lookup table
 const tbl_entry_t lookup_table[] PROGMEM = {
@@ -5228,6 +5270,7 @@ const tbl_entry_t lookup_table[] PROGMEM = {
   { string25, fn_analogread, 0211, doc25 },
   { string26, fn_register, 0212, doc26 },
   { string27, fn_format, 0227, doc27 },
+  { string27a, NULL, 0000, NULL },
   { string28, sp_or, 0307, doc28 },
   { string29, sp_setq, 0327, doc29 },
   { string30, sp_loop, 0307, doc30 },
@@ -5427,6 +5470,7 @@ const tbl_entry_t lookup_table[] PROGMEM = {
   { string223, fn_fillscreen, 0201, doc223 },
   { string224, fn_setrotation, 0211, doc224 },
   { string225, fn_invertdisplay, 0211, doc225 },
+  { string225a, fn_getkey, 0200, doc225a },
   { string226, (fn_ptr_type)LED_BUILTIN, 0, NULL },
   { string227, (fn_ptr_type)HIGH, DIGITALWRITE, NULL },
   { string228, (fn_ptr_type)LOW, DIGITALWRITE, NULL },
@@ -5506,7 +5550,10 @@ void testescape () {
 #if defined serialmonitor
   if (Serial.available() && Serial.read() == '~') error2(PSTR("escape!"));
 #endif
-  if (digitalRead(0) == LOW) error2(PSTR("escape!")); // Push Trackball
+  if (digitalRead(0) == LOW) {
+    pinMode(0, INPUT_PULLUP); 
+    if (digitalRead(0) == LOW) error2(PSTR("escape!")); // Push Trackball
+  }
 }
 
 bool keywordp (object *obj) {
@@ -6177,8 +6224,6 @@ void ScrollDisplay () {
   #endif
 }
 
-const char STX = 2; // Code to invert text
-const char ETX = 3; // Code to invert text
 const char VT = 11; // Vertical tab
 const char BEEP = 7;
 
@@ -6342,11 +6387,9 @@ void initsound () {
 
 // Entry point from the Arduino IDE
 void setup () {
-  #if defined (serialmonitor)
   Serial.begin(9600);
   int start = millis();
   while ((millis() - start) < 5000) { if (Serial) break; }
-  #endif
   initworkspace();
   initenv();
   initsleep();
@@ -6354,8 +6397,7 @@ void setup () {
   initgfx();
   initkybd();
   initsound();
-  pinMode(0, INPUT_PULLUP);
-  pfstring(PSTR("uLisp 4.4d "), pserial); pln(pserial);
+  pfstring(PSTR("uLisp 4.4e "), pserial); pln(pserial);
 }
 
 // Read/Evaluate/Print loop
@@ -6365,7 +6407,7 @@ void repl (object *env) {
     randomSeed(micros());
     gc(NULL, env);
     #if defined(printfreespace)
-    pint(Freespace, pserial);
+    pint(Freespace + 1, pserial);
     #endif
     if (BreakLevel) {
       pfstring(PSTR(" : "), pserial);
