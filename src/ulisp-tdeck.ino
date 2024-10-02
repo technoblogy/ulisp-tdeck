@@ -59,7 +59,7 @@ TFT_eSPI tft;
 #define WORDALIGNED __attribute__((aligned (4)))
 #define BUFFERSIZE 36  // Number of bits+4
 
-#if defined(ARDUINO_ESP32S3_DEV)
+#if defined(ARDUINO_ESP32S3_DEV) || defined(ESP32S3_TDECK)
   #if defined(BOARD_HAS_PSRAM)
   #define WORKSPACESIZE 1000000        /* Cells (8*bytes) */
   #else
@@ -211,7 +211,52 @@ volatile uint8_t Flags = 0b00001; // PRINTREADABLY set by default
 
 // Forward references
 object *tee;
+// Prototypes
 void pfstring (const char *s, pfun_t pfun);
+void pserial (char c);
+void psymbol (symbol_t name, pfun_t pfun);
+void printobject (object *form, pfun_t pfun);
+void printstring (object *form, pfun_t pfun);
+void prin1object (object *form, pfun_t pfun);
+void printsymbol (object *form, pfun_t pfun);
+void checkminmax (builtin_t name, int nargs);
+void ulisperror ();
+void pint (int i, pfun_t pfun);
+void Display (char c);
+void testescape ();
+void pbuiltin (builtin_t name, pfun_t pfun);
+void pintbase (uint32_t i, uint8_t base, pfun_t pfun);
+void pstr (char c);
+void plispstr (symbol_t name, pfun_t pfun);
+void pfl (pfun_t pfun);
+void ProcessKey (char c);
+void repl (object *env);
+void indent (uint8_t spaces, char ch, pfun_t pfun);
+inline void pln (pfun_t pfun);
+uint8_t getminmax (builtin_t name);
+uint8_t nthchar (object *string, int n);
+unsigned int tablesize (int n);
+object *intern (symbol_t name);
+object *apply (object *function, object *args, object *env);
+object *lispstring (char *s);
+object *eval (object *form, object *env);
+object *read (gfun_t gfun);
+object *fn_princtostring (object *args, object *env);
+object *tf_progn (object *args, object *env);
+object *findpair (object *var, object *env);
+symbol_t sym (builtin_t x);
+bool listp (object *x);
+bool keywordp (object *obj);
+bool findsubstring (char *part, builtin_t name);
+bool colonp (symbol_t name);
+int listlength (object *list);
+int glibrary ();
+int stringcompare (object *args, bool lt, bool gt, bool eq);
+int gserial ();
+int subwidthlist (object *form, int w);
+char *lookupdoc (builtin_t name);
+char *cstring (object *form, char *buffer, int buflen);
+intptr_t lookupfn (builtin_t name);
 
 inline symbol_t twist (builtin_t x) {
   return (x<<2) | ((x & 0xC0000000)>>30);
