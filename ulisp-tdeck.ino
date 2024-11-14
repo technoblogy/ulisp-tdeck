@@ -6510,7 +6510,9 @@ int gserial () {
     return temp;
   }
   #if defined (serialmonitor)
+  unsigned long start = millis();
   while (!KybdAvailable) {
+    if (millis() - start > 1000) clrflag(NOECHO);
     if (Serial.available()) {
       char temp = Serial.read();
       if (temp != '\n' && !tstflag(NOECHO)) Serial.print(temp);
