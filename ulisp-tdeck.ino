@@ -1,5 +1,5 @@
-/* uLisp T-Deck Release 4.7 - www.ulisp.com
-   David Johnson-Davies - www.technoblogy.com - 14th November 2024
+/* uLisp T-Deck Release 4.7a - www.ulisp.com
+   David Johnson-Davies - www.technoblogy.com - 25th November 2024
 
    Licensed under the MIT license: https://opensource.org/licenses/MIT
 */
@@ -614,13 +614,13 @@ int SDReadInt (File file) {
   return b0 | b1<<8 | b2<<16 | b3<<24;
 }
 #elif defined(LITTLEFS)
-void FSWrite32 (fs::File file, uint32_t data) {
+void FSWrite32 (File file, uint32_t data) {
   union { uint32_t data2; uint8_t u8[4]; };
   data2 = data;
   if (file.write(u8, 4) != 4) error2("not enough room");
 }
 
-uint32_t FSRead32 (fs::File file) {
+uint32_t FSRead32 (File file) {
   union { uint32_t data; uint8_t u8[4]; };
   file.read(u8, 4);
   return data;
@@ -668,7 +668,7 @@ unsigned int saveimage (object *arg) {
   if (!LittleFS.begin(true)) error2("problem mounting LittleFS");
   int bytesneeded = imagesize*8 + 36; int bytesavailable = LittleFS.totalBytes();
   if (bytesneeded > bytesavailable) error("image too large by", number(bytesneeded - bytesavailable));
-  fs::File file;
+  File file;
   if (stringp(arg)) {
     char buffer[BUFFERSIZE];
     file = LittleFS.open(MakeFilename(arg, buffer), "w");
@@ -740,7 +740,7 @@ unsigned int loadimage (object *arg) {
   return imagesize;
 #elif defined(LITTLEFS)
   if (!LittleFS.begin()) error2("problem mounting LittleFS");
-  fs::File file;
+  File file;
   if (stringp(arg)) {
     char buffer[BUFFERSIZE];
     file = LittleFS.open(MakeFilename(arg, buffer), "r");
@@ -799,7 +799,7 @@ void autorunimage () {
   }
 #elif defined(LITTLEFS)
   if (!LittleFS.begin()) error2("problem mounting LittleFS");
-  fs::File file = LittleFS.open("/ULISP.IMG", "r");
+  File file = LittleFS.open("/ULISP.IMG", "r");
   if (!file) error2("problem autorunning from LittleFS");
   object *autorun = (object *)FSRead32(file);
   file.close();
@@ -5915,7 +5915,6 @@ void backtrace (symbol_t name) {
 
 object *eval (object *form, object *env) {
   bool stackpos;
-  static unsigned long start = 0;
   int TC=0;
   EVAL:
   // Enough space?
@@ -6768,7 +6767,7 @@ void setup () {
   initgfx();
   initkybd();
   initsound();
-  pfstring(PSTR("uLisp 4.7 "), pserial); pln(pserial);
+  pfstring(PSTR("uLisp 4.7a "), pserial); pln(pserial);
 }
 
 // Read/Evaluate/Print loop
