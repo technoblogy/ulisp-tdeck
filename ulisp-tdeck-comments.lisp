@@ -7429,6 +7429,10 @@ void testescape () {
   if (millis()-n < 500) return;
   n = millis();
   if (Serial.available() && Serial.read() == '~') error2("escape!");
+  if (digitalRead(0) == LOW) {
+    pinMode(0, INPUT_PULLUP); 
+    if (digitalRead(0) == LOW) error2(PSTR("escape!")); // Push Trackball
+  }
 }
 
 /*
