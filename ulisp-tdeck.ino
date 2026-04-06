@@ -1,5 +1,5 @@
-/* uLisp T-Deck Release 4.8g - www.ulisp.com
-   David Johnson-Davies - www.technoblogy.com - 27th November 2025
+/* uLisp T-Deck Release 4.8h - www.ulisp.com
+   David Johnson-Davies - www.technoblogy.com - 6th April 2026
 
    Licensed under the MIT license: https://opensource.org/licenses/MIT
 */
@@ -5923,7 +5923,7 @@ const tbl_entry_t lookup_table[] = {
   { string201, fn_delay, 0211, doc201 },
   { string202, fn_millis, 0200, doc202 },
   { string203, fn_sleep, 0201, doc203 },
-  { string204, fn_note, 0203, doc204 },
+  { string204, fn_note, 0204, doc204 },
   { string205, fn_edit, 0211, doc205 },
   { string206, fn_pprint, 0212, doc206 },
   { string207, fn_pprintall, 0201, doc207 },
